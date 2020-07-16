@@ -1,0 +1,29 @@
+Gerador-Sauna
+
+Davide Costa - up201503995
+Elementos do Grupo T1G09:
+Dinis Trigo - up201504196
+Tiago Magalhães - up201607931
+
+
+Descrição da estratégia usada para evitar problemas de sincronização em race conditions:
+Neste trabalho deparamo-nos com alguns problemas de sincronização. No programa sauna (lado do servidor), como temos várias threads, uma para cada pedido de cliente, podem acontecer race conditions.
+Para controlar o acesso à sauna temos duas variáveis que guardam o número de lugares livres (LUGARES_LIVRES) e o género das pessoas que estão a ocupar a sauna (GENDER). Antes de satisfazer o pedido, tem de verificar se o género deste é igual ao género atual (GENDER). Se não for, terá de rejeitar o pedido. Se for, aceita-o e cria a thread responsável por satisfazer o pedido. Esta thread necessita de colocar a variável GENDER igual ao género do pedido, ou seja, modificá-la. Para fazer esta verificação e modificação, tem de aceder e modificar a variável LUGARES_LIVRES. Como várias threads podem precisar de fazê-lo ao mesmo tempo, estamos perante uma race condition.
+Caso o pedido seja aceite (género do pedido igual ao da sauna), é verificado se existem lugares disponíveis na sauna para satisfazer o pedido. Se não existirem, a thread fica suspensa à espera que existam lugares. Se existirem, satisfaz o pedido (fica a dormir durante o tempo do pedido para simular o seu trabalho). Para fazer esta verificação, tem de aceder à variável GENDER. Como várias threads podem precisar de fazê-lo ao mesmo tempo, estamos perante uma race condition.
+Depois de satisfazer o pedido, a thread é responsável por avisar que um lugar foi libertado na sauna (incrementar a variável LUGARES_LIVRES). Como várias threads podem precisar de fazê-lo ao mesmo tempo, estamos perante uma race condition.
+A thread é também responsável por verificar se a sauna ficou vazia (com a saída do cliente), ou seja, se o número de lugares livres é igual ao número máximo de lugares na sauna (variável MAX_LUGARES). Se não ficou vazia, não necessita tomar qualquer ação. Se ficou vazia, é responsável por informar que o género atual na sauna é nulo (para que a thread principal, quando for verificar se pode satisfazer um novo pedido mediante o seu género, saiba que qualquer género pode entrar na sauna). Como várias threads podem precisar de aceder e modificar a variável LUGARES_LIVRES ao mesmo tempo, estamos perante uma race condition.
+
+Portanto, assim identificamos aqui três race conditions:
+	1. Acesso e modificação da variável GENDER para verificar se o cliente pode entrar e atualizar o GENDER atual na sauna.
+	2. Acesso à variável LUGARES_LIVRES para verificar se o cliente pode entrar, seguido de novo acesso e modificação à variável LUGARES_LIVRES quando um cliente sai da sauna.
+	3. Acesso e possível modificação à variável GENDER quando um cliente sai da sauna e se esta ficar vazia (só é modificada neste caso).
+
+Para resolver estes problemas de sincronização utilizamos dois mutexes, um para cada variável. O mutex responsável por controlar o acesso à variável LUGARES_LIVRES tem o nome MUTEX_LUGARES. O mutex responsável por controlar o acesso à variável GENDER tem o nome MUTEX_GENDER.
+	- No caso 1, a main thread faz lock ao MUTEX_GENDER e verifica se o género atual na sauna é igual ao género do pedido. Se não for, faz unlock e rejeita-o. Se for, cria a thread que faz o pedido (não faz unlock ainda pois a thread necessita de o modificar em seguida). A thread que foi criada coloca a variável GENDER igual ao género do pedido e, em seguida, faz unlock ao MUTEX_GENDER. Desta forma, temos o problema de sincronização 1 resolvido.
+	- No caso 2, a thread responsável por satisfazer o pedido, faz lock ao MUTEX_LUGARES e verifica se existem lugares livres. Caso não existam, tem de ficar à espera que existam. Para realizar tal espera de forma ideal (sem o processador ficar constantemente a verificar a variável (busy-waiting com sleep)), utilizámos uma variável de condição: CONDITIONAL_VARIABLE.
+	Desta forma, outra thread, quando termina de satisfazer um pedido, é responsável por "assinalar" ou "acordar" outra thread que está à espera que existem lugares livres na sauna.
+	Quando é notificada que existem lugares livres, continua.
+	Caso já existissem lugares livres no início, não é necessária a utilização da variável de condição. Neste caso, a thread precisa de decrementar o número de lugares livres (MUTEX_LUGARES já está locked) e, em seguida, fazer unlock ao mutex MUTEX_LUGARES.
+	Em seguida, fica a dormir (simulando o trabalho de satisfazer o cliente). Desta forma, temos o problema de sincronização 2 resolvido.
+	- No caso 3, a thread responsável por satisfazer o pedido, no final do seu trabalho, faz lock ao MUTEX_LUGARES e incrementa o número de lugares livres. Em seguida, verifica se a sauna ficou vazia (com a saída do cliente que acaba de servir). Se ficou, faz lock ao MUTEX_GENDER e altera o género atual na sauna (variável GENDER) para nulo, para que a main thread saiba que qualquer género pode entrar na sauna e, em seguida, faz unlock ao MUTEX_GENDER. Como o número de lugares já foi atualizado, faz unlock ao MUTEX_LUGARES.
+	
